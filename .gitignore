@@ -13,6 +13,7 @@ pubspec.lock
 .atom/
 .idea
 .vscode/
+.fvm/
 
 # Test token
 token.json

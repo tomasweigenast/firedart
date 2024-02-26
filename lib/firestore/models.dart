@@ -30,9 +30,7 @@ abstract class Reference {
 
   @override
   bool operator ==(other) =>
-      other is Reference &&
-      runtimeType == other.runtimeType &&
-      fullPath == other.fullPath;
+      other is Reference && runtimeType == other.runtimeType && fullPath == other.fullPath;
 
   @override
   int get hashCode => Object.hash(runtimeType, fullPath);
@@ -56,7 +54,7 @@ abstract class Reference {
   }
 }
 
-class CollectionReference extends Reference {
+class CollectionReference extends QueryReference {
   final FirestoreGateway gateway;
 
   /// Constructs a [CollectionReference] using [FirestoreGateway] and path.
@@ -68,9 +66,11 @@ class CollectionReference extends Reference {
     }
   }
 
+  @override
   QueryReference where(
     String fieldPath, {
     dynamic isEqualTo,
+    dynamic isNotEqualTo,
     dynamic isLessThan,
     dynamic isLessThanOrEqualTo,
     dynamic isGreaterThan,
@@ -78,6 +78,7 @@ class CollectionReference extends Reference {
     dynamic arrayContains,
     List<dynamic>? arrayContainsAny,
     List<dynamic>? whereIn,
+    List<dynamic>? whereNotIn,
     bool isNull = false,
   }) {
     return QueryReference(gateway, path).where(fieldPath,
@@ -89,27 +90,19 @@ class CollectionReference extends Reference {
         arrayContains: arrayContains,
         arrayContainsAny: arrayContainsAny,
         whereIn: whereIn,
+        isNotEqualTo: isNotEqualTo,
+        whereNotIn: whereNotIn,
         isNull: isNull);
   }
 
-  /// Returns [CollectionReference] that's additionally sorted by the specified
-  /// [fieldPath].
-  ///
-  /// The field is a [String] representing a single field name.
-  /// After a [CollectionReference] order by call, you cannot add any more [orderBy]
-  /// calls.
-  QueryReference orderBy(String fieldPath, {bool descending = false}) =>
-      QueryReference(gateway, path).orderBy(fieldPath, descending: descending);
-
   /// Returns [CollectionReference] that's additionally limited to only return up
   /// to the specified number of documents.
+  @override
   QueryReference limit(int count) => QueryReference(gateway, path).limit(count);
 
-  DocumentReference document(String id) =>
-      DocumentReference(_gateway, '$path/$id');
+  DocumentReference document(String id) => DocumentReference(_gateway, '$path/$id');
 
-  Future<Page<Document>> get(
-          {int pageSize = 1024, String nextPageToken = ''}) =>
+  Future<Page<Document>> get({int pageSize = 1024, String nextPageToken = ''}) =>
       _gateway.getCollection(fullPath, pageSize, nextPageToken);
 
   Stream<List<Document>> get stream => _gateway.streamCollection(fullPath);
@@ -120,8 +113,7 @@ class CollectionReference extends Reference {
 }
 
 class DocumentReference extends Reference {
-  DocumentReference(FirestoreGateway gateway, String path)
-      : super(gateway, path) {
+  DocumentReference(FirestoreGateway gateway, String path) : super(gateway, path) {
     if (fullPath.split('/').length % 2 == 0) {
       throw Exception('Path is not a document: $path');
     }
@@ -178,15 +170,13 @@ class Document {
 
   String get id => path.substring(path.lastIndexOf('/') + 1);
 
-  String get path =>
-      _rawDocument.name.substring(_rawDocument.name.indexOf('/documents') + 10);
+  String get path => _rawDocument.name.substring(_rawDocument.name.indexOf('/documents') + 10);
 
   DateTime get createTime => _rawDocument.createTime.toDateTime();
 
   DateTime get updateTime => _rawDocument.updateTime.toDateTime();
 
-  Map<String, dynamic> get map =>
-      _rawDocument.fields.map((key, _) => MapEntry(key, this[key]));
+  Map<String, dynamic> get map => _rawDocument.fields.map((key, _) => MapEntry(key, this[key]));
 
   DocumentReference get reference => DocumentReference(_gateway, path);
 
@@ -254,14 +244,14 @@ class Page<T> extends ListBase<T> {
 class QueryReference extends Reference {
   final StructuredQuery _structuredQuery = StructuredQuery();
 
-  QueryReference(FirestoreGateway gateway, String path) : super(gateway, path) {
-    _structuredQuery.from
-        .add(StructuredQuery_CollectionSelector()..collectionId = id);
+  QueryReference(super.gateway, super.path) {
+    _structuredQuery.from.add(StructuredQuery_CollectionSelector()..collectionId = id);
   }
 
   QueryReference where(
     String fieldPath, {
     dynamic isEqualTo,
+    dynamic isNotEqualTo,
     dynamic isLessThan,
     dynamic isLessThanOrEqualTo,
     dynamic isGreaterThan,
@@ -269,15 +259,14 @@ class QueryReference extends Reference {
     dynamic arrayContains,
     List<dynamic>? arrayContainsAny,
     List<dynamic>? whereIn,
+    List<dynamic>? whereNotIn,
     bool isNull = false,
   }) {
     if (isEqualTo != null) {
-      _addFilter(fieldPath, isEqualTo,
-          operator: StructuredQuery_FieldFilter_Operator.EQUAL);
+      _addFilter(fieldPath, isEqualTo, operator: StructuredQuery_FieldFilter_Operator.EQUAL);
     }
     if (isLessThan != null) {
-      _addFilter(fieldPath, isLessThan,
-          operator: StructuredQuery_FieldFilter_Operator.LESS_THAN);
+      _addFilter(fieldPath, isLessThan, operator: StructuredQuery_FieldFilter_Operator.LESS_THAN);
     }
     if (isLessThanOrEqualTo != null) {
       _addFilter(fieldPath, isLessThanOrEqualTo,
@@ -300,11 +289,16 @@ class QueryReference extends Reference {
           operator: StructuredQuery_FieldFilter_Operator.ARRAY_CONTAINS_ANY);
     }
     if (whereIn != null) {
-      _addFilter(fieldPath, whereIn,
-          operator: StructuredQuery_FieldFilter_Operator.IN);
+      _addFilter(fieldPath, whereIn, operator: StructuredQuery_FieldFilter_Operator.IN);
     }
     if (isNull) {
       _addFilter(fieldPath, null);
+    }
+    if (whereNotIn != null) {
+      _addFilter(fieldPath, whereNotIn, operator: StructuredQuery_FieldFilter_Operator.NOT_IN);
+    }
+    if (isNotEqualTo != null) {
+      _addFilter(fieldPath, isNotEqualTo, operator: StructuredQuery_FieldFilter_Operator.NOT_EQUAL);
     }
 
     return this;
@@ -322,9 +316,8 @@ class QueryReference extends Reference {
   }) {
     final order = StructuredQuery_Order();
     order.field_1 = StructuredQuery_FieldReference()..fieldPath = fieldPath;
-    order.direction = descending
-        ? StructuredQuery_Direction.DESCENDING
-        : StructuredQuery_Direction.ASCENDING;
+    order.direction =
+        descending ? StructuredQuery_Direction.DESCENDING : StructuredQuery_Direction.ASCENDING;
     _structuredQuery.orderBy.add(order);
     return this;
   }
@@ -352,16 +345,14 @@ class QueryReference extends Reference {
       filter.op = operator;
       filter.value = TypeUtil.encode(value);
 
-      final fieldReference = StructuredQuery_FieldReference()
-        ..fieldPath = fieldPath;
+      final fieldReference = StructuredQuery_FieldReference()..fieldPath = fieldPath;
       filter.field_1 = fieldReference;
 
       queryFilter.fieldFilter = filter;
     }
 
     StructuredQuery_CompositeFilter compositeFilter;
-    if (_structuredQuery.hasWhere() &&
-        _structuredQuery.where.hasCompositeFilter()) {
+    if (_structuredQuery.hasWhere() && _structuredQuery.where.hasCompositeFilter()) {
       compositeFilter = _structuredQuery.where.compositeFilter;
     } else {
       compositeFilter = StructuredQuery_CompositeFilter()
@@ -369,7 +360,6 @@ class QueryReference extends Reference {
     }
 
     compositeFilter.filters.add(queryFilter);
-    _structuredQuery.where = StructuredQuery_Filter()
-      ..compositeFilter = compositeFilter;
+    _structuredQuery.where = StructuredQuery_Filter()..compositeFilter = compositeFilter;
   }
 }
